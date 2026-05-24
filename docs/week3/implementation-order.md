@@ -48,7 +48,7 @@ User + Product 간 관계.
 ## 진행 현황
 
 - [x] 1단계 — Brand 도메인
-- [ ] 2단계 — Product 도메인 확장
+- [x] 2단계 — Product 도메인 확장
 - [ ] 3단계 — Product + Brand 도메인 서비스
 - [ ] 4단계 — Like 도메인
 - [ ] 5단계 — Order 도메인

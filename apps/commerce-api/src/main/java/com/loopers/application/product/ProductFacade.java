@@ -1,40 +1,65 @@
 package com.loopers.application.product;
 
+import com.loopers.application.brand.BrandFinder;
+import com.loopers.domain.brand.BrandModel;
 import com.loopers.domain.product.ProductModel;
-import com.loopers.domain.product.ProductService;
+import com.loopers.domain.product.SortType;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
+import java.math.BigDecimal;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 @RequiredArgsConstructor
 @Component
 public class ProductFacade {
+    private final BrandFinder brandFinder;
     private final ProductService productService;
+    private final ProductFinder productFinder;
 
-    public ProductInfo createProduct(String name, String description, Long price, Integer stock) {
-        ProductModel product = productService.createProduct(name, description, price, stock);
-        return ProductInfo.from(product);
+    public ProductInfo createProduct(Long brandId, String name, BigDecimal price, Long stock) {
+        BrandModel brand = brandFinder.getById(brandId);
+
+        ProductModel product = productService.create(brand.getId(), name, price, stock);
+
+        return ProductInfo.from(brand, product);
     }
 
     public ProductInfo getProduct(Long id) {
-        ProductModel product = productService.getProduct(id);
-        return ProductInfo.from(product);
+        ProductModel product = productFinder.getById(id);
+
+        BrandModel brand = brandFinder.getById(product.getBrandId());
+
+        return ProductInfo.from(brand, product);
     }
 
-    public List<ProductInfo> getAllProducts() {
-        List<ProductModel> products = productService.getAllProducts();
+    public List<ProductInfo> getAllProducts(SortType sortType) {
+        List<ProductModel> products = productFinder.getAll(sortType);
+
+        Set<Long> brandIds = products.stream()
+                .map(ProductModel::getBrandId)
+                .collect(Collectors.toSet());
+
+        Map<Long, BrandModel> brandMap = brandFinder.getAllByIds(brandIds).stream()
+                .collect(Collectors.toMap(BrandModel::getId, b -> b));
+
         return products.stream()
-            .map(ProductInfo::from)
-            .toList();
+                .map(product -> ProductInfo.from(brandMap.get(product.getBrandId()), product))
+                .toList();
     }
 
-    public ProductInfo updateProduct(Long id, String name, String description, Long price, Integer stock) {
-        ProductModel product = productService.updateProduct(id, name, description, price, stock);
-        return ProductInfo.from(product);
+    public ProductInfo updateProduct(Long id, String name, BigDecimal price, Long stock) {
+        ProductModel product = productService.update(id, name, price, stock);
+
+        BrandModel brand = brandFinder.getById(product.getBrandId());
+
+        return ProductInfo.from(brand, product);
     }
 
     public void deleteProduct(Long id) {
-        productService.deleteProduct(id);
+        productService.delete(id);
     }
 }

@@ -2,6 +2,7 @@ package com.loopers.interfaces.api.product;
 
 import com.loopers.application.product.ProductFacade;
 import com.loopers.application.product.ProductInfo;
+import com.loopers.domain.product.SortType;
 import com.loopers.interfaces.api.ApiResponse;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
@@ -20,13 +21,12 @@ public class ProductV1Controller {
         @RequestBody ProductV1Dto.CreateProductRequest request
     ) {
         ProductInfo info = productFacade.createProduct(
+            request.brandId(),
             request.name(),
-            request.description(),
             request.price(),
             request.stock()
         );
-        ProductV1Dto.ProductResponse response = ProductV1Dto.ProductResponse.from(info);
-        return ApiResponse.success(response);
+        return ApiResponse.success(ProductV1Dto.ProductResponse.from(info));
     }
 
     @GetMapping("/{productId}")
@@ -34,13 +34,14 @@ public class ProductV1Controller {
         @PathVariable(value = "productId") Long productId
     ) {
         ProductInfo info = productFacade.getProduct(productId);
-        ProductV1Dto.ProductResponse response = ProductV1Dto.ProductResponse.from(info);
-        return ApiResponse.success(response);
+        return ApiResponse.success(ProductV1Dto.ProductResponse.from(info));
     }
 
     @GetMapping
-    public ApiResponse<List<ProductV1Dto.ProductResponse>> getAllProducts() {
-        List<ProductInfo> infos = productFacade.getAllProducts();
+    public ApiResponse<List<ProductV1Dto.ProductResponse>> getAllProducts(
+        @RequestParam(value = "sort", defaultValue = "LATEST") SortType sort
+    ) {
+        List<ProductInfo> infos = productFacade.getAllProducts(sort);
         List<ProductV1Dto.ProductResponse> responses = infos.stream()
             .map(ProductV1Dto.ProductResponse::from)
             .toList();
@@ -55,12 +56,10 @@ public class ProductV1Controller {
         ProductInfo info = productFacade.updateProduct(
             productId,
             request.name(),
-            request.description(),
             request.price(),
             request.stock()
         );
-        ProductV1Dto.ProductResponse response = ProductV1Dto.ProductResponse.from(info);
-        return ApiResponse.success(response);
+        return ApiResponse.success(ProductV1Dto.ProductResponse.from(info));
     }
 
     @DeleteMapping("/{productId}")

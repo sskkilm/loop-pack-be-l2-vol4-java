@@ -6,6 +6,8 @@ import com.loopers.domain.brand.BrandRepository;
 import com.loopers.domain.like.LikeRepository;
 import com.loopers.domain.product.ProductModel;
 import com.loopers.domain.product.ProductRepository;
+import com.loopers.domain.stock.StockModel;
+import com.loopers.domain.stock.StockRepository;
 import com.loopers.domain.user.Gender;
 import com.loopers.domain.user.PasswordEncryptor;
 import com.loopers.domain.user.UserModel;
@@ -50,6 +52,9 @@ class LikeFacadeIntegrationTest {
     private LikeRepository likeRepository;
 
     @Autowired
+    private StockRepository stockRepository;
+
+    @Autowired
     private PasswordEncryptor passwordEncryptor;
 
     @Autowired
@@ -81,6 +86,10 @@ class LikeFacadeIntegrationTest {
         return createProduct(1L);
     }
 
+    private void saveStock(Long productId, Long quantity) {
+        stockRepository.save(new StockModel(productId, quantity));
+    }
+
     private Long likeCountOf(Long productId) {
         return productRepository.find(productId).orElseThrow().getLikeCount();
     }
@@ -95,6 +104,7 @@ class LikeFacadeIntegrationTest {
             // given
             BrandModel brand = createBrand();
             Long productId = createProduct(brand.getId());
+            saveStock(productId, 5L);
             likeFacade.like(LOGIN_ID, LOGIN_PW, productId);
 
             // when
@@ -104,7 +114,8 @@ class LikeFacadeIntegrationTest {
             assertAll(
                 () -> assertThat(result).hasSize(1),
                 () -> assertThat(result.get(0).id()).isEqualTo(productId),
-                () -> assertThat(result.get(0).brandName()).isEqualTo(brand.getName())
+                () -> assertThat(result.get(0).brandName()).isEqualTo(brand.getName()),
+                () -> assertThat(result.get(0).inStock()).isTrue()
             );
         }
 

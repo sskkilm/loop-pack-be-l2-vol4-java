@@ -5,6 +5,8 @@ import com.loopers.domain.stock.StockRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
+import java.util.Collection;
+import java.util.List;
 import java.util.Optional;
 
 @RequiredArgsConstructor
@@ -20,5 +22,15 @@ public class StockRepositoryImpl implements StockRepository {
     @Override
     public Optional<StockModel> findByProductId(Long productId) {
         return stockJpaRepository.findByProductId(productId);
+    }
+
+    @Override
+    public List<StockModel> findAllByProductIds(Collection<Long> productIds) {
+        return stockJpaRepository.findAllByProductIdIn(productIds);
+    }
+
+    @Override
+    public int decreaseQuantity(Long productId, Long quantity) {
+        return stockJpaRepository.decreaseQuantity(productId, quantity);
     }
 }

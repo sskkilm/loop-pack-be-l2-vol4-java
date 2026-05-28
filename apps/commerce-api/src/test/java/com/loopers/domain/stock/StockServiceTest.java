@@ -7,9 +7,12 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
+import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
@@ -25,6 +28,29 @@ class StockServiceTest {
     void setUp() {
         stockRepository = mock(StockRepository.class);
         stockService = new StockService(stockRepository);
+    }
+
+    @DisplayName("여러 productId 로 재고 맵을 조회할 때,")
+    @Nested
+    class GetMapByProductIds {
+
+        @DisplayName("해당 productId 목록에 대한 재고 맵이 반환된다.")
+        @Test
+        void returnsStockMap_whenStocksExist() {
+            // given
+            Long productId = 1L;
+            StockModel stock = new StockModel(productId, 10L);
+            when(stockRepository.findAllByProductIds(List.of(productId))).thenReturn(List.of(stock));
+
+            // when
+            Map<Long, StockModel> result = stockService.getMapByProductIds(List.of(productId));
+
+            // then
+            assertAll(
+                    () -> assertThat(result).hasSize(1),
+                    () -> assertThat(result.get(productId)).isSameAs(stock)
+            );
+        }
     }
 
     @DisplayName("재고를 productId로 조회할 때,")

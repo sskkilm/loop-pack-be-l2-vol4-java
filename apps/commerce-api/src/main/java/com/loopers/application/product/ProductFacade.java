@@ -4,7 +4,6 @@ import com.loopers.domain.brand.BrandModel;
 import com.loopers.domain.brand.BrandService;
 import com.loopers.domain.product.ProductModel;
 import com.loopers.domain.product.ProductService;
-import com.loopers.domain.product.SortType;
 import com.loopers.domain.stock.StockModel;
 import com.loopers.domain.stock.StockService;
 import lombok.RequiredArgsConstructor;
@@ -12,6 +11,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
 import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
 
 import java.math.BigDecimal;
@@ -31,9 +31,10 @@ public class ProductFacade {
         return ProductInfo.from(product, brand);
     }
 
-    public List<ProductInfo> getAllProducts(SortType sortType) {
-        List<ProductModel> products = productService.findAll(sortType);
-        return productInfoAssembler.toInfoList(products);
+    public Page<ProductInfo> getProducts(Long brandId, Pageable pageable) {
+        Page<ProductModel> productPage = productService.findProducts(brandId, pageable);
+        List<ProductInfo> infos = productInfoAssembler.toInfoList(productPage.getContent());
+        return new PageImpl<>(infos, pageable, productPage.getTotalElements());
     }
 
     @Transactional

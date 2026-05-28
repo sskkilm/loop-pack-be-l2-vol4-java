@@ -10,7 +10,8 @@ public class ProductV1Dto {
         String brandName,
         String name,
         BigDecimal price,
-        Long likeCount
+        Long likeCount,
+        boolean inStock
     ) {
         public static ProductResponse from(ProductInfo info) {
             return new ProductResponse(
@@ -18,7 +19,8 @@ public class ProductV1Dto {
                 info.brandName(),
                 info.name(),
                 info.price(),
-                info.likeCount()
+                info.likeCount(),
+                info.inStock()
             );
         }
     }

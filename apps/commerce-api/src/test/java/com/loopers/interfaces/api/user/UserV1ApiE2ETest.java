@@ -4,6 +4,8 @@ import com.loopers.domain.brand.BrandModel;
 import com.loopers.domain.brand.BrandRepository;
 import com.loopers.domain.product.ProductModel;
 import com.loopers.domain.product.ProductRepository;
+import com.loopers.domain.stock.StockModel;
+import com.loopers.domain.stock.StockRepository;
 import com.loopers.domain.user.Gender;
 import com.loopers.domain.user.PasswordEncryptor;
 import com.loopers.domain.user.UserModel;
@@ -43,6 +45,7 @@ class UserV1ApiE2ETest {
     private final UserRepository userRepository;
     private final BrandRepository brandRepository;
     private final ProductRepository productRepository;
+    private final StockRepository stockRepository;
     private final DatabaseCleanUp databaseCleanUp;
     private final PasswordEncryptor passwordEncryptor;
 
@@ -52,6 +55,7 @@ class UserV1ApiE2ETest {
         UserRepository userRepository,
         BrandRepository brandRepository,
         ProductRepository productRepository,
+        StockRepository stockRepository,
         DatabaseCleanUp databaseCleanUp,
         PasswordEncryptor passwordEncryptor
     ) {
@@ -59,6 +63,7 @@ class UserV1ApiE2ETest {
         this.userRepository = userRepository;
         this.brandRepository = brandRepository;
         this.productRepository = productRepository;
+        this.stockRepository = stockRepository;
         this.databaseCleanUp = databaseCleanUp;
         this.passwordEncryptor = passwordEncryptor;
     }
@@ -262,6 +267,7 @@ class UserV1ApiE2ETest {
             ));
             BrandModel brand = brandRepository.save(new BrandModel("테스트브랜드"));
             ProductModel product = productRepository.save(new ProductModel(brand.getId(), "테스트상품", BigDecimal.valueOf(5000)));
+            stockRepository.save(new StockModel(product.getId(), 10L));
             testRestTemplate.exchange(
                 "/api/v1/products/" + product.getId() + "/likes",
                 HttpMethod.POST,

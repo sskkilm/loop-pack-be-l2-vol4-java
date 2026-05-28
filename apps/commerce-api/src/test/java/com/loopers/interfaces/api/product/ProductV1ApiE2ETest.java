@@ -89,7 +89,8 @@ class ProductV1ApiE2ETest {
                 () -> assertThat(response.getBody().data().brandName()).isEqualTo("Nike"),
                 () -> assertThat(response.getBody().data().name()).isEqualTo("에어맥스"),
                 () -> assertThat(response.getBody().data().price()).isEqualByComparingTo(BigDecimal.valueOf(150000)),
-                () -> assertThat(response.getBody().data().likeCount()).isEqualTo(0L)
+                () -> assertThat(response.getBody().data().likeCount()).isEqualTo(0L),
+                () -> assertThat(response.getBody().data().inStock()).isTrue()
             );
         }
 

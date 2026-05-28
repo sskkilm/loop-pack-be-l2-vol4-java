@@ -16,6 +16,9 @@ import org.springframework.data.domain.Pageable;
 
 import java.math.BigDecimal;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 @RequiredArgsConstructor
 @Component
@@ -28,7 +31,8 @@ public class ProductFacade {
     public ProductInfo getProduct(Long id) {
         ProductModel product = productService.getById(id);
         BrandModel brand = brandService.getById(product.getBrandId());
-        return ProductInfo.from(product, brand);
+        StockModel stock = stockService.getByProductId(id);
+        return ProductInfo.from(product, brand, stock);
     }
 
     public Page<ProductInfo> getProducts(Long brandId, Pageable pageable) {
@@ -45,8 +49,13 @@ public class ProductFacade {
 
     public Page<ProductInfo> getProductsByBrandId(Long brandId, Pageable pageable) {
         BrandModel brand = brandService.getById(brandId);
-        return productService.findAllByBrandId(brandId, pageable)
-            .map(p -> ProductInfo.from(p, brand));
+        Page<ProductModel> productPage = productService.findAllByBrandId(brandId, pageable);
+        Set<Long> productIds = productPage.getContent().stream().map(ProductModel::getId).collect(Collectors.toSet());
+        Map<Long, StockModel> stockMap = stockService.getMapByProductIds(productIds);
+        List<ProductInfo> infos = productPage.getContent().stream()
+            .map(p -> ProductInfo.from(p, brand, stockMap.get(p.getId())))
+            .toList();
+        return new PageImpl<>(infos, pageable, productPage.getTotalElements());
     }
 
     public ProductAdminInfo getProductForAdmin(Long id) {

@@ -117,7 +117,8 @@ class ProductFacadeIntegrationTest {
             assertAll(
                     () -> assertThat(result.id()).isEqualTo(product.getId()),
                     () -> assertThat(result.brandName()).isEqualTo("Adidas"),
-                    () -> assertThat(result.name()).isEqualTo("울트라부스트")
+                    () -> assertThat(result.name()).isEqualTo("울트라부스트"),
+                    () -> assertThat(result.inStock()).isTrue()
             );
         }
 

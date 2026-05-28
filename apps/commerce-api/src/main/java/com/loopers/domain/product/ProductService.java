@@ -22,10 +22,6 @@ public class ProductService {
                 .orElseThrow(() -> new CoreException(ErrorType.NOT_FOUND, "[id = " + id + "] 상품을 찾을 수 없습니다."));
     }
 
-    public List<ProductModel> findAll(SortType sortType) {
-        return productRepository.findAll(sortType);
-    }
-
     public List<ProductModel> findAllByIds(List<Long> ids) {
         return productRepository.findAllByIds(ids);
     }
@@ -36,6 +32,10 @@ public class ProductService {
 
     public Page<ProductModel> findAllByBrandId(Long brandId, Pageable pageable) {
         return productRepository.findAllByBrandId(brandId, pageable);
+    }
+
+    public Page<ProductModel> findProducts(Long brandId, Pageable pageable) {
+        return productRepository.findProducts(brandId, pageable);
     }
 
     public ProductModel create(Long brandId, String name, BigDecimal price) {

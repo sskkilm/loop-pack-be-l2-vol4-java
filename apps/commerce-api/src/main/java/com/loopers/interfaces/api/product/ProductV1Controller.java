@@ -2,12 +2,12 @@ package com.loopers.interfaces.api.product;
 
 import com.loopers.application.product.ProductFacade;
 import com.loopers.application.product.ProductInfo;
-import com.loopers.domain.product.SortType;
 import com.loopers.interfaces.api.ApiResponse;
+import com.loopers.interfaces.api.PageResponse;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.web.bind.annotation.*;
-
-import java.util.List;
 
 @RequiredArgsConstructor
 @RestController
@@ -25,13 +25,13 @@ public class ProductV1Controller {
     }
 
     @GetMapping
-    public ApiResponse<List<ProductV1Dto.ProductResponse>> getAllProducts(
-        @RequestParam(value = "sort", defaultValue = "LATEST") SortType sort
+    public ApiResponse<PageResponse<ProductV1Dto.ProductResponse>> getAllProducts(
+        @RequestParam(value = "brandId", required = false) Long brandId,
+        @RequestParam(value = "sort", defaultValue = "LATEST") SortType sortType,
+        @RequestParam(value = "page", defaultValue = "0") int page,
+        @RequestParam(value = "size", defaultValue = "20") int size
     ) {
-        List<ProductInfo> infos = productFacade.getAllProducts(sort);
-        List<ProductV1Dto.ProductResponse> responses = infos.stream()
-            .map(ProductV1Dto.ProductResponse::from)
-            .toList();
-        return ApiResponse.success(responses);
+        Page<ProductInfo> pageResult = productFacade.getProducts(brandId, PageRequest.of(page, size, sortType.toSort()));
+        return ApiResponse.success(PageResponse.from(pageResult.map(ProductV1Dto.ProductResponse::from)));
     }
 }

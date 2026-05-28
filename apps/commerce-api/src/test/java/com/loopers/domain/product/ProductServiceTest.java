@@ -6,11 +6,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.EnumSource;
 
 import java.math.BigDecimal;
-import java.util.List;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -62,42 +59,6 @@ class ProductServiceTest {
 
             // then
             assertThat(result.getErrorType()).isEqualTo(ErrorType.NOT_FOUND);
-        }
-    }
-
-    @DisplayName("상품 목록을 조회할 때,")
-    @Nested
-    class GetAll {
-
-        @DisplayName("정렬 기준별로 상품 목록이 반환된다.")
-        @ParameterizedTest
-        @EnumSource(SortType.class)
-        void returnsProducts_whenProductsExist(SortType sortType) {
-            // given
-            List<ProductModel> products = List.of(
-                    new ProductModel(10L, "상품A", BigDecimal.valueOf(2000)),
-                    new ProductModel(10L, "상품B", BigDecimal.valueOf(1000))
-            );
-            when(productRepository.findAll(sortType)).thenReturn(products);
-
-            // when
-            List<ProductModel> result = productService.findAll(sortType);
-
-            // then
-            assertThat(result).isSameAs(products);
-        }
-
-        @DisplayName("상품이 없으면 빈 목록이 반환된다.")
-        @Test
-        void returnsEmptyList_whenNoProductsExist() {
-            // given
-            when(productRepository.findAll(SortType.LATEST)).thenReturn(List.of());
-
-            // when
-            List<ProductModel> result = productService.findAll(SortType.LATEST);
-
-            // then
-            assertThat(result).isEmpty();
         }
     }
 

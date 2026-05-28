@@ -7,6 +7,7 @@ import com.loopers.domain.product.ProductRepository;
 import com.loopers.domain.stock.StockModel;
 import com.loopers.domain.stock.StockRepository;
 import com.loopers.interfaces.api.ApiResponse;
+import com.loopers.interfaces.api.PageResponse;
 import com.loopers.utils.DatabaseCleanUp;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
@@ -21,7 +22,6 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 
 import java.math.BigDecimal;
-import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertAll;
@@ -120,16 +120,17 @@ class ProductV1ApiE2ETest {
             saveStock(productB.getId(), 3L);
 
             // when
-            ParameterizedTypeReference<ApiResponse<List<ProductV1Dto.ProductResponse>>> responseType =
+            ParameterizedTypeReference<ApiResponse<PageResponse<ProductV1Dto.ProductResponse>>> responseType =
                 new ParameterizedTypeReference<>() {};
-            ResponseEntity<ApiResponse<List<ProductV1Dto.ProductResponse>>> response =
+            ResponseEntity<ApiResponse<PageResponse<ProductV1Dto.ProductResponse>>> response =
                 testRestTemplate.exchange(BASE_URL, HttpMethod.GET, null, responseType);
 
             // then
             assertAll(
                 () -> assertTrue(response.getStatusCode().is2xxSuccessful()),
-                () -> assertThat(response.getBody().data()).hasSize(2),
-                () -> assertThat(response.getBody().data()).allMatch(p -> p.brandName().equals("Adidas"))
+                () -> assertThat(response.getBody().data().content()).hasSize(2),
+                () -> assertThat(response.getBody().data().totalElements()).isEqualTo(2),
+                () -> assertThat(response.getBody().data().content()).allMatch(p -> p.brandName().equals("Adidas"))
             );
         }
 
@@ -137,15 +138,82 @@ class ProductV1ApiE2ETest {
         @Test
         void returnsEmptyList_whenNoProductsExist() {
             // when
-            ParameterizedTypeReference<ApiResponse<List<ProductV1Dto.ProductResponse>>> responseType =
+            ParameterizedTypeReference<ApiResponse<PageResponse<ProductV1Dto.ProductResponse>>> responseType =
                 new ParameterizedTypeReference<>() {};
-            ResponseEntity<ApiResponse<List<ProductV1Dto.ProductResponse>>> response =
+            ResponseEntity<ApiResponse<PageResponse<ProductV1Dto.ProductResponse>>> response =
                 testRestTemplate.exchange(BASE_URL, HttpMethod.GET, null, responseType);
 
             // then
             assertAll(
                 () -> assertTrue(response.getStatusCode().is2xxSuccessful()),
-                () -> assertThat(response.getBody().data()).isEmpty()
+                () -> assertThat(response.getBody().data().content()).isEmpty(),
+                () -> assertThat(response.getBody().data().totalElements()).isEqualTo(0)
+            );
+        }
+
+        @DisplayName("brandId로 필터링하면 해당 브랜드의 상품만 응답으로 반환한다.")
+        @Test
+        void returnsFilteredProducts_whenBrandIdIsProvided() {
+            // given
+            BrandModel brandA = saveBrand("Nike");
+            BrandModel brandB = saveBrand("Adidas");
+            ProductModel productA = saveProduct(brandA.getId(), "나이키 상품", BigDecimal.valueOf(100000));
+            saveProduct(brandB.getId(), "아디다스 상품", BigDecimal.valueOf(200000));
+            saveStock(productA.getId(), 5L);
+
+            // when
+            ParameterizedTypeReference<ApiResponse<PageResponse<ProductV1Dto.ProductResponse>>> responseType =
+                new ParameterizedTypeReference<>() {};
+            ResponseEntity<ApiResponse<PageResponse<ProductV1Dto.ProductResponse>>> response =
+                testRestTemplate.exchange(BASE_URL + "?brandId=" + brandA.getId(), HttpMethod.GET, null, responseType);
+
+            // then
+            assertAll(
+                () -> assertTrue(response.getStatusCode().is2xxSuccessful()),
+                () -> assertThat(response.getBody().data().totalElements()).isEqualTo(1),
+                () -> assertThat(response.getBody().data().content().get(0).brandName()).isEqualTo("Nike")
+            );
+        }
+
+        @DisplayName("존재하지 않는 brandId로 필터링하면 빈 목록을 응답으로 반환한다.")
+        @Test
+        void returnsEmptyList_whenBrandIdDoesNotExist() {
+            // when
+            ParameterizedTypeReference<ApiResponse<PageResponse<ProductV1Dto.ProductResponse>>> responseType =
+                new ParameterizedTypeReference<>() {};
+            ResponseEntity<ApiResponse<PageResponse<ProductV1Dto.ProductResponse>>> response =
+                testRestTemplate.exchange(BASE_URL + "?brandId=999", HttpMethod.GET, null, responseType);
+
+            // then
+            assertAll(
+                () -> assertTrue(response.getStatusCode().is2xxSuccessful()),
+                () -> assertThat(response.getBody().data().content()).isEmpty(),
+                () -> assertThat(response.getBody().data().totalElements()).isEqualTo(0)
+            );
+        }
+
+        @DisplayName("page와 size 파라미터로 페이지네이션이 동작한다.")
+        @Test
+        void returnsPaginatedProducts_whenPageAndSizeAreProvided() {
+            // given
+            BrandModel brand = saveBrand("Nike");
+            for (int i = 1; i <= 5; i++) {
+                ProductModel product = saveProduct(brand.getId(), "상품" + i, BigDecimal.valueOf(i * 10000));
+                saveStock(product.getId(), 10L);
+            }
+
+            // when
+            ParameterizedTypeReference<ApiResponse<PageResponse<ProductV1Dto.ProductResponse>>> responseType =
+                new ParameterizedTypeReference<>() {};
+            ResponseEntity<ApiResponse<PageResponse<ProductV1Dto.ProductResponse>>> response =
+                testRestTemplate.exchange(BASE_URL + "?page=0&size=3", HttpMethod.GET, null, responseType);
+
+            // then
+            assertAll(
+                () -> assertTrue(response.getStatusCode().is2xxSuccessful()),
+                () -> assertThat(response.getBody().data().content()).hasSize(3),
+                () -> assertThat(response.getBody().data().totalElements()).isEqualTo(5),
+                () -> assertThat(response.getBody().data().totalPages()).isEqualTo(2)
             );
         }
     }

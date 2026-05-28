@@ -7,6 +7,7 @@ import java.util.List;
 public record PageResponse<T>(
     List<T> content,
     long totalElements,
+    int totalPages,
     int page,
     int size
 ) {
@@ -14,6 +15,7 @@ public record PageResponse<T>(
         return new PageResponse<>(
             springPage.getContent(),
             springPage.getTotalElements(),
+            springPage.getTotalPages(),
             springPage.getNumber(),
             springPage.getSize()
         );

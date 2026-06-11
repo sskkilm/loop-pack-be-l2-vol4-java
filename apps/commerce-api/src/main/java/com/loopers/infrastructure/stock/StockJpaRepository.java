@@ -15,7 +15,7 @@ public interface StockJpaRepository extends JpaRepository<StockModel, Long> {
 
     List<StockModel> findAllByProductIdIn(Collection<Long> productIds);
 
-    @Modifying(clearAutomatically = true)
+    @Modifying
     @Query("UPDATE StockModel s SET s.quantity = s.quantity - :quantity WHERE s.productId = :productId AND s.quantity >= :quantity")
     int decreaseQuantity(@Param("productId") Long productId, @Param("quantity") Long quantity);
 }

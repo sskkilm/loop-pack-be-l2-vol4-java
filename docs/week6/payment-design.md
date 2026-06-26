@@ -189,6 +189,9 @@ sequenceDiagram
 > [!important] 핵심: 어떤 분기든 사용자에게 "실패"라고 단정하지 않는다
 > 동기 응답으로는 결과를 확정할 수 없다(처리는 1~5초 뒤 비동기). 따라서 **항상 `PENDING` + "처리 중" 안내**로 응답하고, 확정은 콜백/폴링에 맡긴다. 이것이 Fallback의 철학과 동일하다(§7.3).
 
+> [!note] 사용자에게 최종 결과를 알리는 방식 — 클라이언트 폴링
+> `202 PENDING` 이후 최종 결과(`PAID`/`FAILED`)는 **클라이언트가 결제 조회 API(`GET /api/v1/payments/{id}`)를 폴링**해서 확인한다. 서버 푸시(WebSocket/SSE/알림)는 두지 않는다 — 과제 범위 밖이고, 결과 확정의 단일 출처는 §6의 콜백/폴링이 채운 DB 상태다. 조회 API는 그 상태를 그대로 노출할 뿐이다.
+
 ---
 
 ## 6. 정합성 복구 — 콜백 + 폴링 + 수동 (3중 안전망)
@@ -203,7 +206,7 @@ sequenceDiagram
 
 ### 6.2 콜백 — `POST /api/v1/payments/callback`
 
-PG가 처리 완료 시 트랜잭션 정보 전체를 통보한다: `{ transactionKey, orderId, cardType, cardNo, amount, status, reason }`. 여기서 `status`는 PG의 `TransactionStatus`(**`PENDING`/`SUCCESS`/`FAILED`**)이며, 우리 `PaymentStatus`로 매핑한다(`SUCCESS→PAID`, `FAILED→FAILED`, `PENDING`은 아직 미확정이므로 전이하지 않음). 우리가 쓰는 것은 `transactionKey`(또는 `orderId`)·`status`·`reason`이고 나머지 필드는 검증/로깅용이다.
+PG가 처리 완료 시 트랜잭션 정보 전체를 통보한다: `{ transactionKey, orderId, cardType, cardNo, amount, status, reason }`. 여기서 `status`는 PG의 `TransactionStatus`(**`PENDING`/`SUCCESS`/`FAILED`**)이며, 우리 `PaymentStatus`로 매핑한다(`SUCCESS→PAID`, `FAILED→FAILED`, `PENDING`은 아직 미확정이므로 전이하지 않음). 우리가 전이 판단에 쓰는 것은 `transactionKey`(또는 `orderId`)·`status`·`reason`이고, `amount`·`cardNo`는 **전이를 허용할지 가르는 무결성 가드**(아래 [!danger])다.
 
 ```mermaid
 sequenceDiagram
@@ -221,7 +224,10 @@ sequenceDiagram
 ```
 
 > [!warning] 콜백 엔드포인트는 공개 엔드포인트
-> PG가 호출하므로 `X-Loopers-LoginId/Pw`가 없다 → **인증 인터셉터에서 예외 처리(공개 경로 등록)** 필요. 진위 검증은 과제 범위상 생략하되, 실무라면 서명/IP 화이트리스트를 둔다(설계 노트로 명시).
+> PG가 호출하므로 `X-Loopers-LoginId/Pw`가 없다 → **인증 인터셉터에서 예외 처리(공개 경로 등록)** 필요. **진위 검증은 생략한다** — 이 과제는 견고한 인증/인가를 다루지 않고 `loginId`/`loginPw` 헤더 수준의 로그인만 처리하므로, 콜백에도 동일 수위를 맞춘다. (실무라면 서명/IP 화이트리스트를 둔다 — 설계 노트로만 명시.)
+
+> [!danger] 콜백·폴링이 가져온 `amount`·`cardNo`가 우리가 저장한 값과 다르면 — 전이하지 않고 격리
+> `amount` 불일치는 **금액 위변조**, `cardNo` 불일치는 **오배달(다른 거래의 콜백)** 가능성이다. 이때는 `status`가 `SUCCESS`여도 **`PAID`/`FAILED`로 전이하지 않고 `UNKNOWN`으로 격리 + 운영 알림**한다. "검증/로깅용"이라던 `amount`·`cardNo`는 사실 **전이를 허용할지 가르는 가드**다. 진위 검증을 생략한 만큼(위), 우리가 이미 보유한 값과의 대조가 유일한 무결성 방어선이 된다.
 
 ### 6.3 폴링(reconciliation) 스케줄러
 
@@ -237,7 +243,7 @@ flowchart TD
     E -- SUCCESS --> F[조건부 UPDATE → PAID + 후처리]
     E -- FAILED --> G[조건부 UPDATE → FAILED]
     E -- 처리 중 --> H{상한 초과?}
-    E -- 주문 없음 --> I[미도달=돈 안 빠짐 → FAILED 또는 재요청 안전]
+    E -- 주문 없음 --> I[미도달=돈 안 빠짐 → FAILED 확정. 자동 재요청 X, 사용자 재시도]
     H -- 아니오 --> J[그대로 다음 주기 재확인]
     H -- 예 --> K[UNKNOWN/STUCK + 운영 알림]
 ```
@@ -251,7 +257,7 @@ flowchart TD
 | PG 응답 | 의미 | 행동 |
 |---|---|---|
 | 처리 중(PENDING) | 도달함, 결과 미정 | 건드리지 마(재시도 ❌), 다음 주기 재확인 |
-| 주문 없음 | 미도달, 돈 안 빠짐 | 재시도 안전 ✅ → FAILED 처리 또는 재요청 |
+| 주문 없음 | 미도달, 돈 안 빠짐 | **FAILED로 확정** (자동 재요청 ❌). 재시도해도 이중결제는 없지만, 시스템이 임의 재호출하지 않고 사용자 재시도에 맡긴다 |
 | SUCCESS/FAILED | 결과 확정 | 그 결과로 확정 |
 
 ### 6.4 수동 복구 API
@@ -358,26 +364,29 @@ Fallback은 *끝*이 아니라 **안전한 시작점(PENDING)으로 떨궈주는
 - `PAID` 확정 시 후처리로 **주문 상태를 확정**한다. 현재 `OrderStatus`는 `PLACED`만 존재하므로, 결제 결과를 반영할 상태(`PAID`/`PAYMENT_FAILED` 등)를 **주문 도메인에 추가**한다(구현 계획 §참고).
 - 이 결합(여러 도메인 조정)은 `PaymentFacade`/콜백 핸들러가 조정하되, **외부 HTTP 호출은 트랜잭션 밖**이라는 §4 원칙을 지킨다.
 
-### 9.1 재결제 정책 (결정 필요)
+### 9.1 재결제 정책 (확정)
 
 > [!note] `orderId 당 진행중 결제 1건` unique 제약의 함정
 > 잘못된 카드로 `FAILED`된 주문도 제약에 걸리면 **정당한 재결제가 막힌다.**
-> → 제약을 **"non-terminal(PENDING) + PAID"에만** 적용하거나(= FAILED는 재시도 허용), 재결제를 새 `PaymentModel` row로 허용한다. **권장: 결제 시도마다 새 row, "활성(PENDING/PAID) 결제 1건"만 부분 unique로 보장.**
+> → **결정: 결제 시도마다 새 `PaymentModel` row를 만들고, "활성(PENDING/PAID) 결제 1건"만 부분 unique로 보장한다.** FAILED는 terminal로 남고(불변), 재결제는 새 row로 진행되므로 잘못된 카드 → 카드 변경 후 재시도 흐름이 자연스럽게 열린다. terminal 불변 원칙(§3.2)과 충돌하지 않는다(기존 row를 되돌리지 않으므로).
 
 > [!important] 요청 측 멱등성 — "따닥 클릭" 방어
 > 동시성은 후처리(콜백/폴링)만의 문제가 아니다. 사용자가 결제 버튼을 연타하면 **같은 주문에 PG 트랜잭션이 2건** 생길 수 있다. → `pay()` 진입 시 **해당 주문의 활성(PENDING/PAID) 결제가 이미 있으면 PG를 새로 호출하지 않고 그 결제를 멱등 반환**한다. 후처리 쪽 조건부 UPDATE 멱등성(§8)과 짝을 이루어 요청 쪽도 같은 수준으로 닫는다. (DB 레벨 백스톱은 위의 "활성 결제 1건" 부분 unique 제약.)
 
 ---
 
-## 10. 미해결/결정 항목 요약
+## 10. 결정 항목 요약 (확정)
 
-| # | 항목 | 권장 |
+| # | 항목 | 결정 |
 |---|---|---|
-| 1 | 재결제 시 새 row vs 기존 row 재사용 | 새 row + 활성 결제 1건 부분 unique |
-| 2 | 폴링 grace/상한 값 | grace 10s / 상한 10분 |
-| 3 | 콜백 진위 검증 | 과제는 생략, 실무는 서명/IP 화이트리스트 |
-| 4 | CB 인스턴스 분리 | `paymentRequest`(POST) / `paymentQuery`(GET) |
-| 5 | 미도달 5xx 자동 FAILED 시점 | 폴링이 "주문 없음" 확인 후에만 FAILED |
+| 1 | 재결제 시 새 row vs 기존 row 재사용 | **새 row + 활성(PENDING/PAID) 결제 1건 부분 unique** (FAILED는 재시도 허용) |
+| 2 | 폴링 grace/상한 값 | **grace 10s / 상한 10분** (문서 기본값 그대로) |
+| 3 | 콜백 진위 검증 | **생략** (과제가 견고한 인증/인가를 다루지 않음 — loginId/loginPw 수준과 동일 수위) |
+| 4 | CB 인스턴스 분리 | **`paymentRequest`(POST) / `paymentQuery`(GET)** |
+| 5 | 미도달(주문 없음) 확정 시 동작 | **FAILED로 확정 + 사용자 재시도 유도** (시스템 자동 재요청 ❌) |
+| 6 | 결제 결과 사용자 통지 | **클라이언트 폴링**(`GET /api/v1/payments/{id}`). 서버 푸시 없음 |
+| 7 | 콜백/폴링 amount·cardNo 불일치 | **전이 거부 → `UNKNOWN` 격리 + 운영 알림** |
+| 8 | UNKNOWN 격리 건 처리 | **수동 복구 API만 제공**(`POST /payments/{id}/reconcile`). 알림 채널/SLA는 설계 노트 |
 
 ---
 

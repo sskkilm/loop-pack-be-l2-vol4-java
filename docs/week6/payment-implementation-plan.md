@@ -77,7 +77,7 @@ public interface PaymentRepository {
 |---|---|---|
 | `createPending(order, cardType, cardNo)` | **Tx1** `@Transactional` | Payment(PENDING) 저장 후 커밋 → 닻 확보 |
 | `attachTransactionKey(paymentId, key)` | **Tx2** `@Transactional` | 접수 응답 반영 |
-| `confirm(transactionKey, status, reason)` | **Tx3** `@Transactional` | 조건부 UPDATE 전이 + affected=1일 때만 후처리 트리거 |
+| `confirm(transactionKey, status, reason, amount, cardNo)` | **Tx3** `@Transactional` | **(1)** 대상 Payment 조회 후 `amount`·`cardNo` 무결성 가드(설계 §6.2) — 불일치 시 전이 거부 + `markUnknown` **(2)** 일치 시 조건부 UPDATE 전이 + affected=1일 때만 후처리 트리거 |
 | `findPendingForReconcile(threshold)` | (조회) | 폴링 대상 조회 |
 | `markUnknown(paymentId)` | `@Transactional` | 상한 초과 격리 |
 
@@ -92,7 +92,7 @@ public interface PaymentGateway {
     List<PgTransaction> findByOrderId(String orderNumber);
 }
 ```
-`PgTransaction`(domain DTO): `transactionKey`, `status(PENDING/SUCCESS/FAILED)`, `reason`. — **PG의 status를 우리 PaymentStatus로 매핑하는 책임은 어댑터/서비스에 둔다**(`SUCCESS→PAID`, `FAILED→FAILED`, `PENDING→`전이 보류).
+`PgTransaction`(domain DTO): `transactionKey`, `status(PENDING/SUCCESS/FAILED)`, `reason`, `amount`(무결성 가드용 — PG 조회 응답이 제공하면 폴링 경로에서도 금액 대조). — **PG의 status를 우리 PaymentStatus로 매핑하는 책임은 어댑터/서비스에 둔다**(`SUCCESS→PAID`, `FAILED→FAILED`, `PENDING→`전이 보류). 무결성 가드(설계 §6.2)는 `amount`가 일치할 때만 전이를 허용한다.
 
 ### 1.7 예외 타입 — 재시도 정책과 직결 (중요)
 ```java
@@ -198,16 +198,22 @@ public PaymentInfo pay(Long userId, String orderNumber, CardType cardType, Strin
 | 메서드 | 엔드포인트 | 인증 | 비고 |
 |---|---|---|---|
 | `pay` | `POST /api/v1/payments` | `X-Loopers-LoginId/Pw` | 202 + PENDING 안내 |
+| `get` | `GET /api/v1/payments/{id}` | `X-Loopers-LoginId/Pw` | **결과 통지 = 클라이언트 폴링**(설계 §5). 현재 `status`(PENDING/PAID/FAILED/UNKNOWN)·`failureReason` 노출. 소유자 검증 필수 |
 | `callback` | `POST /api/v1/payments/callback` | **공개(인증 제외)** | PG 통보 수신 |
 | `reconcile` | `POST /api/v1/payments/{id}/reconcile` | 관리자 | 수동 복구 |
+
+- **결과 통지는 서버 푸시 없이 클라이언트 폴링**으로 처리한다(설계 §10-6). `GET`은 DB에 확정된 상태를 그대로 노출할 뿐이고, 상태를 확정하는 주체는 §3.2 콜백/폴링이다. 별도 통지 인프라(WebSocket/SSE/알림)는 두지 않는다.
 
 ### 4.2 `PaymentV1Dto` (record)
 - `PaymentRequest(orderId, cardType, cardNo)` — **amount 없음**(서버 도출).
 - `PaymentResponse(paymentId, orderNumber, status, message)`.
-- `CallbackRequest` — **PG가 보내는 페이로드는 `TransactionInfo` 전체**(pg-simulator의 `PaymentCoreRelay`가 `RestTemplate.postForEntity(callbackUrl, transactionInfo, ...)`로 전송): `transactionKey`, `orderId`, `cardType`, `cardNo`, `amount`, `status`, `reason`. **수신 record는 이 필드 전체를 받도록** 정의하고(역직렬화 실패 방지), 우리가 쓰는 건 `transactionKey`·`status`·`reason`. `status`는 PG enum `PENDING/SUCCESS/FAILED` 문자열 → 우리 PaymentStatus로 매핑(`SUCCESS→PAID`, `FAILED→FAILED`, `PENDING→`보류).
+- `PaymentStatusResponse(paymentId, orderNumber, status, failureReason)` — **클라이언트 폴링용 조회 응답**(`GET /payments/{id}`). 확정된 DB 상태를 그대로 노출.
+- `CallbackRequest` — **PG가 보내는 페이로드는 `TransactionInfo` 전체**(pg-simulator의 `PaymentCoreRelay`가 `RestTemplate.postForEntity(callbackUrl, transactionInfo, ...)`로 전송): `transactionKey`, `orderId`, `cardType`, `cardNo`, `amount`, `status`, `reason`. **수신 record는 이 필드 전체를 받도록** 정의하고(역직렬화 실패 방지), `status`는 PG enum `PENDING/SUCCESS/FAILED` 문자열 → 우리 PaymentStatus로 매핑(`SUCCESS→PAID`, `FAILED→FAILED`, `PENDING→`보류).
+  - **무결성 가드(설계 §6.2)**: 전이 전 콜백의 `amount`·`cardNo`(마스킹 비교)가 우리가 저장한 `PaymentModel` 값과 일치하는지 확인한다. **불일치하면 `PAID`/`FAILED`로 전이하지 않고 `markUnknown(paymentId)`으로 격리 + 운영 알림 로그**를 남긴다(금액 위변조·오배달 방어). 진위 검증을 생략(§4.3)한 만큼 이 대조가 유일한 무결성 방어선이다.
 
 ### 4.3 인증 인터셉터 예외
 - 콜백 경로(`/api/v1/payments/callback`)를 **인증 인터셉터 화이트리스트**에 등록(PG는 로그인 헤더 없음).
+- **콜백 진위 검증은 생략한다**(설계 §10-3) — 이 과제는 견고한 인증/인가를 다루지 않고 `loginId`/`loginPw` 헤더 수준의 로그인만 처리하므로, 콜백에도 동일 수위를 맞춘다. 서명/IP 화이트리스트는 구현하지 않는다. 대신 **§4.2 amount·cardNo 무결성 가드**가 잘못된 콜백으로 인한 오염을 막는 1차 방어선 역할을 한다.
 
 ---
 
@@ -219,12 +225,16 @@ public void reconcilePendingPayments() {
     ZonedDateTime grace = ZonedDateTime.now().minusSeconds(10); // grace period
     for (PaymentModel p : paymentService.findPendingForReconcile(grace)) {
         // transactionKey 있으면 단건 조회, 없으면 orderNumber로 조회
-        // 결과대로 confirm(...) 또는 createdAt 10분 초과 시 markUnknown(...)
+        // - SUCCESS/FAILED  → confirm(...) (조건부 UPDATE, affected=1일 때만 후처리)
+        // - 처리 중(PENDING) → 건드리지 않고 다음 주기 재확인
+        // - 주문 없음(미도달) → transitionToFailed(...) 로 FAILED 확정 (자동 재요청 X, 사용자 재시도)
+        // - createdAt 10분 초과   → markUnknown(...) 격리
     }
 }
 ```
 - `@EnableScheduling` 활성화 필요(설정 클래스).
 - 조회는 `@CircuitBreaker(name="paymentQuery")` 경유.
+- **"주문 없음(미도달)" 확정 시 시스템은 자동 재요청하지 않는다**(설계 §10-5). 돈이 안 빠진 게 증명되므로 재시도해도 안전하지만, 임의 재호출 대신 **FAILED로 떨구고 사용자 재시도에 맡긴다.**
 
 ---
 
@@ -312,7 +322,9 @@ resilience4j:
 | `PaymentGatewayImpl` | 통합/단위 | CB OPEN 시 Fallback, Retry 동작, PG status 매핑 |
 | `PaymentFacade` | **통합(Testcontainers)** | Tx 분리 검증: PG 예외 시 Payment가 **PENDING으로 남아있는지** DB 재조회 / 정상 시 transactionKey 저장 |
 | 콜백·폴링 동시성 | 통합 | 콜백+폴링 동시 confirm 시 **후처리 1회**만 실행되는지(조건부 UPDATE) — real 제약 배경 `assertDoesNotThrow` + 상태 단언 |
-| Controller | E2E(RANDOM_PORT) | 성공: 202 + PENDING 응답 **및** DB 영속 상태 / 실패: 상태 코드 |
+| 무결성 가드 | 통합 | 콜백 `amount`/`cardNo` 불일치 시 **전이 거부 + UNKNOWN 격리**(PAID로 안 넘어감) DB 상태 단언 |
+| 재결제 | 통합 | FAILED 주문 재결제 시 **새 row 생성** / 활성(PENDING/PAID) 결제 존재 시 PG 재호출 없이 **멱등 반환** |
+| Controller | E2E(RANDOM_PORT) | 성공: 202 + PENDING 응답 **및** DB 영속 상태, `GET /payments/{id}`로 상태 폴링 / 실패: 상태 코드 |
 
 - `verify()`/`any()` 지양. 동시성 강검증은 통합 테스트로.
 - PG 호출은 통합 테스트에서 실제 pg-simulator 대신 **stub/WireMock 또는 `PaymentGateway` Fake**로 시나리오(미도달/타임아웃/CB OPEN) 재현.
@@ -323,7 +335,7 @@ resilience4j:
 
 1. **도메인 골격**: `CardType`, `PaymentStatus`, `PaymentModel`, `PaymentRepository`, `PaymentService`(+단위 테스트).
 2. **PG 포트/어댑터**: `PaymentGateway`, FeignClient, `PaymentGatewayImpl` + Timeout 설정.
-3. **결제 요청 흐름**: `PaymentFacade`(Tx 분리), Controller `POST /payments`, 주문 결합 + E2E.
+3. **결제 요청 흐름**: `PaymentFacade`(Tx 분리), Controller `POST /payments` + `GET /payments/{id}`(클라이언트 폴링용 조회), 주문 결합 + E2E.
 4. **CircuitBreaker + Fallback** 적용 및 설정(Must-Have 완성).
 5. **콜백 수신** + 조건부 UPDATE 후처리 + 동시성 통합 테스트.
 6. **폴링 스케줄러** + 수동 복구 API + UNKNOWN 격리.

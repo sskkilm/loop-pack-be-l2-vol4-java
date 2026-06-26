@@ -4,11 +4,14 @@ import com.loopers.domain.brand.BrandModel;
 import com.loopers.domain.brand.BrandRepository;
 import com.loopers.domain.product.ProductModel;
 import com.loopers.domain.product.ProductRepository;
+import com.loopers.domain.product.ProductStatsModel;
+import com.loopers.domain.product.ProductStatsRepository;
 import com.loopers.domain.stock.StockModel;
 import com.loopers.domain.stock.StockRepository;
 import com.loopers.interfaces.api.ApiResponse;
 import com.loopers.interfaces.api.PageResponse;
 import com.loopers.utils.DatabaseCleanUp;
+import com.loopers.utils.RedisCleanUp;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -45,11 +48,18 @@ class ProductV1ApiE2ETest {
     private StockRepository stockRepository;
 
     @Autowired
+    private ProductStatsRepository productStatsRepository;
+
+    @Autowired
     private DatabaseCleanUp databaseCleanUp;
+
+    @Autowired
+    private RedisCleanUp redisCleanUp;
 
     @AfterEach
     void tearDown() {
         databaseCleanUp.truncateAllTables();
+        redisCleanUp.truncateAll();
     }
 
     private BrandModel saveBrand(String name) {
@@ -57,7 +67,9 @@ class ProductV1ApiE2ETest {
     }
 
     private ProductModel saveProduct(Long brandId, String name, BigDecimal price) {
-        return productRepository.save(new ProductModel(brandId, name, price));
+        ProductModel product = productRepository.save(new ProductModel(brandId, name, price));
+        productStatsRepository.save(new ProductStatsModel(product));
+        return product;
     }
 
     private void saveStock(Long productId, Long quantity) {

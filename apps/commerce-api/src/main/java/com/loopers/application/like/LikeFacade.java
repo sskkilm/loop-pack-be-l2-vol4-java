@@ -2,6 +2,8 @@ package com.loopers.application.like;
 
 import com.loopers.application.product.ProductInfo;
 import com.loopers.application.product.ProductInfoAssembler;
+import com.loopers.domain.like.LikeEventType;
+import com.loopers.domain.like.LikeOutboxService;
 import com.loopers.domain.like.LikeService;
 import com.loopers.domain.product.ProductModel;
 import com.loopers.domain.product.ProductService;
@@ -19,6 +21,7 @@ public class LikeFacade {
 
     private final LikeService likeService;
     private final ProductService productService;
+    private final LikeOutboxService likeOutboxService;
     private final ProductInfoAssembler productInfoAssembler;
     private final UserService userService;
 
@@ -27,7 +30,7 @@ public class LikeFacade {
         UserModel user = userService.getLoginUser(loginId, loginPw);
         ProductModel product = productService.getById(productId);
         if (likeService.register(user.getId(), product.getId()).isApplied()) {
-            productService.increaseLikeCount(product.getId());
+            likeOutboxService.record(product.getId(), LikeEventType.LIKED_EVENT);
         }
     }
 
@@ -36,7 +39,7 @@ public class LikeFacade {
         UserModel user = userService.getLoginUser(loginId, loginPw);
         ProductModel product = productService.getById(productId);
         if (likeService.cancel(user.getId(), product.getId()).isApplied()) {
-            productService.decreaseLikeCount(product.getId());
+            likeOutboxService.record(product.getId(), LikeEventType.UNLIKED_EVENT);
         }
     }
 

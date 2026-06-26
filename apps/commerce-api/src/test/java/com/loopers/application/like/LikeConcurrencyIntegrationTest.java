@@ -4,6 +4,8 @@ import com.loopers.domain.brand.BrandModel;
 import com.loopers.domain.brand.BrandRepository;
 import com.loopers.domain.product.ProductModel;
 import com.loopers.domain.product.ProductRepository;
+import com.loopers.domain.product.ProductStatsModel;
+import com.loopers.domain.product.ProductStatsRepository;
 import com.loopers.domain.user.Gender;
 import com.loopers.domain.user.PasswordEncryptor;
 import com.loopers.domain.user.UserModel;
@@ -34,10 +36,16 @@ class LikeConcurrencyIntegrationTest {
     private LikeFacade likeFacade;
 
     @Autowired
+    private LikeOutboxProcessor likeOutboxProcessor;
+
+    @Autowired
     private BrandRepository brandRepository;
 
     @Autowired
     private ProductRepository productRepository;
+
+    @Autowired
+    private ProductStatsRepository productStatsRepository;
 
     @Autowired
     private UserRepository userRepository;
@@ -59,6 +67,7 @@ class LikeConcurrencyIntegrationTest {
         // given
         BrandModel brand = brandRepository.save(new BrandModel("브랜드"));
         ProductModel product = productRepository.save(new ProductModel(brand.getId(), "상품", BigDecimal.valueOf(10000)));
+        productStatsRepository.save(new ProductStatsModel(product));
         Long productId = product.getId();
 
         List<String> loginIds = new ArrayList<>();
@@ -90,9 +99,10 @@ class LikeConcurrencyIntegrationTest {
         startGate.countDown();
         done.await();
         executor.shutdown();
+        likeOutboxProcessor.process();
 
         // then
-        Long likeCount = productRepository.find(productId).orElseThrow().getLikeCount();
+        Long likeCount = productStatsRepository.findByProduct(product).orElseThrow().getLikeCount();
         assertThat(likeCount).isEqualTo((long) THREAD_COUNT);
     }
 
@@ -102,6 +112,7 @@ class LikeConcurrencyIntegrationTest {
         // given
         BrandModel brand = brandRepository.save(new BrandModel("브랜드"));
         ProductModel product = productRepository.save(new ProductModel(brand.getId(), "상품", BigDecimal.valueOf(10000)));
+        productStatsRepository.save(new ProductStatsModel(product));
         Long productId = product.getId();
 
         List<String> loginIds = new ArrayList<>();
@@ -117,6 +128,7 @@ class LikeConcurrencyIntegrationTest {
         for (String loginId : loginIds) {
             likeFacade.like(loginId, LOGIN_PW, productId);
         }
+        likeOutboxProcessor.process();
 
         // when
         CountDownLatch startGate = new CountDownLatch(1);
@@ -138,9 +150,10 @@ class LikeConcurrencyIntegrationTest {
         startGate.countDown();
         done.await();
         executor.shutdown();
+        likeOutboxProcessor.process();
 
         // then
-        Long likeCount = productRepository.find(productId).orElseThrow().getLikeCount();
+        Long likeCount = productStatsRepository.findByProduct(product).orElseThrow().getLikeCount();
         assertThat(likeCount).isEqualTo(0L);
     }
 }

@@ -4,6 +4,7 @@ import com.loopers.domain.BaseEntity;
 import com.loopers.support.error.CoreException;
 import com.loopers.support.error.ErrorType;
 import jakarta.persistence.Entity;
+import jakarta.persistence.Index;
 import jakarta.persistence.Table;
 import lombok.Getter;
 import org.hibernate.annotations.SQLRestriction;
@@ -12,14 +13,18 @@ import java.math.BigDecimal;
 
 @Getter
 @Entity
-@Table(name = "product")
+@Table(name = "product", indexes = {
+    @Index(name = "idx_product_deleted_at",       columnList = "deleted_at"),
+    @Index(name = "idx_product_deleted_at_price", columnList = "deleted_at, price"),
+    @Index(name = "idx_product_brand_id_deleted_at",       columnList = "brand_id, deleted_at"),
+    @Index(name = "idx_product_brand_id_deleted_at_price", columnList = "brand_id, deleted_at, price")
+})
 @SQLRestriction("deleted_at IS NULL")
 public class ProductModel extends BaseEntity {
 
     private Long brandId;
     private String name;
     private BigDecimal price;
-    private Long likeCount;
 
     protected ProductModel() {
     }
@@ -30,7 +35,6 @@ public class ProductModel extends BaseEntity {
         this.brandId = brandId;
         this.name = name;
         this.price = price;
-        this.likeCount = 0L;
     }
 
     public void update(String newName, BigDecimal newPrice) {

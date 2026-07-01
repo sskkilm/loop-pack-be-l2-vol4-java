@@ -10,6 +10,7 @@ import java.util.List;
 public class LikeService {
 
     private final LikeRepository likeRepository;
+    private final LikeEventPublisher eventPublisher;
 
     public List<Long> getLikedProductIds(Long userId) {
         return likeRepository.findAllByUserId(userId).stream()
@@ -18,14 +19,18 @@ public class LikeService {
     }
 
     public LikeResult register(Long userId, Long productId) {
-        return likeRepository.save(new LikeModel(userId, productId))
-                ? LikeResult.APPLIED
-                : LikeResult.IGNORED;
+        if (!likeRepository.save(new LikeModel(userId, productId))) {
+            return LikeResult.IGNORED;
+        }
+        eventPublisher.publish(new ProductLikedEvent(productId));
+        return LikeResult.APPLIED;
     }
 
     public LikeResult cancel(Long userId, Long productId) {
-        return likeRepository.deleteByUserIdAndProductId(userId, productId)
-                ? LikeResult.APPLIED
-                : LikeResult.IGNORED;
+        if (!likeRepository.deleteByUserIdAndProductId(userId, productId)) {
+            return LikeResult.IGNORED;
+        }
+        eventPublisher.publish(new ProductUnlikedEvent(productId));
+        return LikeResult.APPLIED;
     }
 }

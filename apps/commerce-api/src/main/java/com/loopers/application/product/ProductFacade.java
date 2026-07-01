@@ -11,7 +11,6 @@ import com.loopers.domain.stock.StockService;
 import com.loopers.infrastructure.product.ProductCacheStore;
 import com.loopers.infrastructure.product.ProductListCacheValue;
 import lombok.RequiredArgsConstructor;
-import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -36,7 +35,6 @@ public class ProductFacade {
     private final StockService stockService;
     private final ProductInfoAssembler productInfoAssembler;
     private final ProductCacheStore productCacheStore;
-    private final ApplicationEventPublisher eventPublisher;
 
     public ProductInfo getProduct(Long id) {
         Optional<ProductInfo> cached = productCacheStore.findProduct(id);
@@ -72,7 +70,6 @@ public class ProductFacade {
     public void deleteProduct(Long id) {
         productService.delete(id);
         stockService.delete(id);
-        eventPublisher.publishEvent(new ProductCacheEvictEvent(List.of(id)));
     }
 
     public Page<ProductInfo> getProductsByBrandId(Long brandId, Pageable pageable) {
@@ -110,7 +107,6 @@ public class ProductFacade {
         StockModel stock = stockService.update(id, stockQuantity);
         BrandModel brand = brandService.getById(product.getBrandId());
         ProductStatsModel stats = productStatsService.getByProduct(product);
-        eventPublisher.publishEvent(new ProductCacheEvictEvent(List.of(id)));
         return ProductAdminInfo.from(product, brand, stock, stats);
     }
 

@@ -51,10 +51,18 @@ public OrderInfo createOrder(...) {
 | 로직 | 판정 | 이유 |
 |---|---|---|
 | 쿠폰 사용 · 재고 차감 · 주문 생성 | **A** | 셋 중 하나라도 실패하면 나머지도 무효여야 한다. 재고는 깎였는데 주문이 없거나, 쿠폰만 소진되면 정합성이 깨진다. 같은 트랜잭션 필수. |
-| 상품 캐시 무효화 | **C** | 캐시는 실패해도 TTL로 결국 정리된다. 이미 `ProductCacheEvictEvent`로 분리돼 있고 리스너는 `AFTER_COMMIT` + `try/catch`다. |
+| 상품 캐시 무효화 | **C** | 캐시는 실패해도 TTL로 결국 정리된다. 리스너는 `AFTER_COMMIT` + `try/catch`다. **다만 현재 `ProductCacheEvictEvent`는 command 형태다 — 아래 노트 참조.** |
 | 주문 완료 알림 · 유저 행동 로깅 | **C** (미구현) | 알림 발송이 실패해도 주문은 유효하다. 현재 코드에 없으나, 추가된다면 트랜잭션 안이 아니라 `AFTER_COMMIT` 리스너에 붙어야 한다. |
 
 > **주의 — publish는 트랜잭션 안, 실행은 커밋 후.** `publishEvent`가 `@Transactional` 메서드 안에서 호출되지만, `ProductCacheEvictListener`가 `AFTER_COMMIT`이므로 실제 무효화는 커밋 후에 실행된다. 만약 주문이 롤백되면 이벤트는 발행됐어도 리스너가 뜨지 않는다 — 일어나지 않은 주문의 캐시를 지우지 않는다. 이 동작이 캐시 무효화가 C에 속한다는 판정과 정확히 맞물린다.
+
+> **노트 — `ProductCacheEvictEvent`는 event가 아니라 command에 가깝다(리팩터링 권장).** §1의 기준(이벤트 = 이미 일어난 사실, publisher는 소비자를 모른다)을 이 이벤트에 적용하면 어긋난다. `ProductCacheEvictEvent(productIds)`는 이름부터 **반응(evict)을 지시**하고, publisher(`createOrder`)가 "캐시를 지워야 한다"는 하위 시스템 정책을 이미 알고 있다. 전달 메커니즘만 pub/sub일 뿐 모델링은 "캐시 무효화 명령"이다.
+>
+> 더 나은 형태는 **사실을 발행하는 것** — `createOrder`는 `OrderCreated(orderId, items, userId, …)`를 쏘고, 캐시 무효화·판매량 집계·주문 알림·행동 로깅이 각각 그 사실의 **리스너**가 된다. 그러면 (a) publisher 무지가 회복되고, (b) "어떤 캐시를 지울지"(productIds 도출)가 캐시 리스너로 돌아가며, (c) **Step 2의 판매량 집계가 별도 이벤트 없이 `OrderCreated`에 리스너만 얹어 붙는다.** 하나의 사실에 반응이 여럿 달리는 이 지점이 event 지향이 command 지향보다 나은 이유의 교과서적 예다.
+>
+> 단, `ProductCacheEvictEvent`는 `deleteBrand`·`deleteProduct`·`updateProductForAdmin`·좋아요 리스너도 공유한다. 캐시 무효화가 **유일한 반응**인 그 경로들은 사실→명령이 1:1이라 공용 이벤트를 남겨도 방어 가능하다. 반응이 여럿인 **`createOrder`가 `OrderCreated`로 전환하기에 가장 명확한 자리**다.
+>
+> **패키지 배치**는 레포의 `apps/pg-simulator`(payment 도메인)를 표준으로 삼는다: 사실 이벤트는 `domain/<도메인>/`, 퍼블리셔는 도메인 포트 + `infrastructure/` 구현(Spring `ApplicationEventPublisher`를 감쌈), 리스너는 `interfaces/event/<도메인>/`에 얇게. 상세 규칙과 commerce-api 적용 예는 [round7-event-application-map.md §1.2](./round7-event-application-map.md#12-이벤트-관련-패키지-배치--appspg-simulator-기준) 참조.
 
 현재 알림·로깅이 없다는 것은 "판단할 게 없다"는 뜻이 아니다. **추가될 때 트랜잭션 안으로 끌고 들어오지 않는 것**이 이 축의 실전 가치다. 알림 전송을 `createOrder` 트랜잭션 안에서 동기 호출하면, 알림 서버 지연이 주문 트랜잭션의 커넥션 점유 시간을 늘리고 실패 시 정상 주문까지 롤백시킨다.
 
@@ -132,6 +140,12 @@ sequenceDiagram
 
 현재 구현은 **Outbox row를 스케줄러가 1초마다 폴링 → 인프로세스 `ApplicationEvent`로 발행 → 리스너가 별도 트랜잭션에서 집계**하는 형태다. 여기서 인프로세스 이벤트 홉(B의 발행 지점)이 바로 **Step 2에서 Kafka로 대체되는 자리**다. 지금은 같은 JVM 안에서 이벤트가 오가지만, 집계를 별도 시스템(레포의 Kafka consumer 모듈은 `commerce-streamer` — 퀘스트 문서의 `commerce-collector`에 해당)으로 넘기려면 이 홉이 브로커를 타야 한다.
 
+> **노트 — `LikeCountChangedEvent`도 event가 아니라 command에 가깝다(`ProductLiked`/`ProductUnliked`로 정리 권장).** 2.1의 `ProductCacheEvictEvent`와 같은 병이지만 더 교묘하다. 이름은 과거형("수가 바뀌었다")이라 사실처럼 보이나, **발행 시점(`LikeOutboxProcessor`)에는 카운트가 아직 안 바뀌었다** — 실제 증감은 리스너가 한다. 즉 "일어난 사실"이 아니라 "리스너가 만들어야 할 결과(outcome)"를 이름으로 선언하고 있다. 게다가 페이로드에 `outboxId`를 실어(`record(Long outboxId, Long productId, LikeEventType eventType)`) 리스너가 `markDoneIfPending(event.outboxId())`로 dedup하게 한다 — 전달 메커니즘이 새어나오고, 특정 소비자 하나에 강하게 묶인다.
+>
+> 진짜 과거 사실은 이미 `LikeEventType`에 있다 — `LIKED_EVENT`/`UNLIKED_EVENT`, 즉 **"유저가 좋아요를 눌렀다/취소했다"**. `LikeFacade.like`/`unlike`가 각각 `register(...).isApplied()`/`cancel(...).isApplied()`가 true일 때만 기록하므로(재좋아요·재취소는 기록 안 됨) 이건 정직한 대칭 사실이다. 정직한 형태는 `ProductLiked`/`ProductUnliked`(또는 방향을 담은 단일 `ProductLikeChanged`)를 발행하고, 카운트 증감(`increase`/`decrease`)은 그 사실의 **리스너**가 맡는 것이다. `outboxId` 누출은 소비자 관심사로 옮겨져 **Step 2에서 `event_handled(event_id)`가 대신한다.**
+>
+> **좋아요 취소가 순서 보장의 필요성을 드러낸다.** 같은 상품에 대한 `LIKED_EVENT` → `UNLIKED_EVENT`가 **역순으로 처리되면 decrease가 increase보다 먼저 반영돼 카운트가 음수/오류로 틀어진다.** in-process 단일 폴러에선 안 드러나지만, Step 2에서 Kafka로 넘기면 **partition key=`productId`로 같은 상품 이벤트를 같은 파티션에 몰아 순서를 보장**해야 한다. 이것이 퀘스트 "PartitionKey 기반 이벤트 순서 보장" 항목의 구체적 근거다. `OrderCreated`와 이 `ProductLiked/Unliked`는 "리스너가 할 일을 이름으로 붙인 것"을 "이미 일어난 사실"로 되돌리는 **같은 리팩터링의 두 사례**다(2.1 노트 참조).
+
 ### 2.4 나머지 도메인 스윕 (brand · coupon · product 조회 · user · stock)
 
 과제가 이름을 댄 것은 주문·결제·좋아요지만, 요청은 "commerce-api의 이벤트 경계 탐색"이므로 나머지 도메인에도 같은 축을 적용한다. 결론부터: 대부분 A(정합성)라 분리 대상이 아니며, **집계(B) 성격의 미발굴 경계 두 곳**이 Step 2와 직접 맞물린다.
@@ -165,7 +179,7 @@ C로 분류된 로직을 붙일 때, 주요 트랜잭션의 결과와 어떻게 
 
 ### 3.1 B를 구현하는 표준 형태 — 비동기 이벤트 발행 + Outbox
 
-B(결과적 정합성)를 새로 구현할 때는 **outbox 기록**과 **실제 발송**을 각각 다른 phase의 리스너로 분리한다. 하나의 도메인 이벤트를 발행하면 두 리스너가 반응한다.
+B(결과적 정합성)를 새로 구현할 때는 **outbox 기록**과 **실제 발송**을 각각 다른 phase의 리스너로 분리하고, 그 위에 **미발송분을 주워 재전송하는 릴레이**를 둔다. 이 셋이 한 세트다 — 리스너 둘만으로는 at-least-once가 성립하지 않는다.
 
 ```java
 @Transactional
@@ -178,27 +192,37 @@ public XxxInfo doSomething(XxxCommand command) {
 // 리스너 ①: outbox 기록 — 주요 트랜잭션과 같은 Tx에 합류 (원자적, 유실 차단)
 @TransactionalEventListener(phase = TransactionPhase.BEFORE_COMMIT)
 public void record(XxxExternalEvent event) {
-    eventRecorder.save(event.toEventRecordCommand());
+    eventRecorder.save(event.toEventRecordCommand());   // status = PENDING
 }
 
-// 리스너 ②: 브로커 전송 — 커밋 확정 후 비동기 (best-effort, relay가 재시도)
+// 리스너 ②: 브로커 전송 (fast-path) — 커밋 확정 후 비동기 (best-effort)
 @Async(EVENT_ASYNC_TASK_EXECUTOR)
 @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
 public void send(XxxExternalEvent event) {
     sendService.send(XxxMessagePayload.from(event));   // 전송 대상은 정책에 따라 다름 (예: Kafka)
+    // 성공 시 outbox status = DONE. 실패해도 예외를 삼킨다 — ③이 다시 보낸다.
+}
+
+// ③ 릴레이 — outbox의 미발송분을 주기적으로 폴링해 재전송 (at-least-once의 실제 보증자)
+@Scheduled(fixedDelay = 1000)
+public void relay() {
+    eventRecorder.findPending().forEach(record -> {
+        sendService.send(record.toMessagePayload());   // 재전송 후 성공하면 DONE 마킹
+    });
 }
 ```
 
-이 구조가 축과 맞물리는 지점이 핵심이다. **하나의 B를 두 조각으로 쪼개면 각 조각의 판정이 다르다.**
+이 구조가 축과 맞물리는 지점이 핵심이다. **하나의 B를 세 조각으로 쪼개면 각 조각의 판정이 다르다.**
 
-| 조각 | phase | 축 판정 | 이유 |
+| 조각 | phase / 실행 | 축 판정 | 이유 |
 |---|---|---|---|
-| outbox 기록 (①) | `BEFORE_COMMIT` | **A** | 주요 로직과 원자적으로 커밋돼야 유실이 없다. 실패하면 주요 로직도 롤백. |
-| 브로커 전송 (②) | `AFTER_COMMIT` + `@Async` | **C** | 내구성은 ①의 outbox로 이미 확보됐다. 전송 자체가 실패해도 relay가 outbox를 보고 재시도하므로 best-effort로 둔다. |
+| outbox 기록 (①) | `BEFORE_COMMIT` | **A** | 주요 로직과 원자적으로 커밋돼야 유실이 없다. 실패하면 주요 로직도 롤백. **내구성은 여기서 확보된다.** |
+| 브로커 전송 (②) | `AFTER_COMMIT` + `@Async` | **C** | 정상 경로의 발송 지연을 줄이는 **fast-path일 뿐**이다. 실패해도 삼킨다 — 내구성은 ①이, 재전송은 ③이 책임진다. |
+| 릴레이 (③) | `@Scheduled` 폴링 | — (인프라) | ②가 실패해 outbox에 남은 `PENDING`을 주워 다시 보낸다. **at-least-once를 실제로 보증하는 주체.** ②가 없어도 ③만으로 정합성은 성립하고(폴링 주기만큼 지연될 뿐), ③이 없으면 ②의 실패분이 영영 미발송으로 남아 outbox 패턴이 무너진다. |
 
-즉 "B = 유실되면 안 되는 부분(A)을 outbox로 못박고, 그 위에서 발송은 best-effort(C)로 흘려보낸다"로 분해된다. 이것이 §1에서 말한 축의 재귀적 적용의 가장 구체적인 형태다.
+즉 "B = 유실되면 안 되는 부분(A)을 outbox로 못박고(①), 정상 경로는 fast-path(C)로 흘려보내되(②), 그 실패분은 릴레이(③)가 반드시 따라잡는다"로 분해된다. 이것이 §1에서 말한 축의 재귀적 적용의 가장 구체적인 형태다.
 
-> **레포의 기존 좋아요 outbox와의 차이.** 현재 좋아요 플로우(2.3)는 Facade가 `likeOutboxService.record()`를 직접 호출하고 `@Scheduled` 폴러가 발행하는 형태다. 위 표준 형태는 outbox 기록을 `BEFORE_COMMIT` 리스너로 옮겨 Facade에서 분리하고, 발송을 `AFTER_COMMIT` + `@Async`로 처리한다. **신규 async+outbox 작업(예: 판매량·조회수 집계)은 이 표준 형태를 따른다.** 전송 대상(Kafka 여부)은 비즈니스 정책에 따라 달라진다.
+> **레포의 기존 좋아요 outbox와의 차이.** 현재 좋아요 플로우(2.3)는 Facade가 `likeOutboxService.record()`를 직접 호출하고(①에 해당), `@Scheduled` 폴러(`LikeOutboxProcessor` — ③에 해당)가 발행하는 형태다. **② fast-path 없이 릴레이 폴링만으로 발행하는 단순화된 버전**이라 보면 된다 — 그래서 좋아요는 항상 폴링 주기(1초)만큼 지연된 뒤 집계된다. 위 표준 형태는 여기에 (a) outbox 기록을 `BEFORE_COMMIT` 리스너로 옮겨 Facade에서 분리하고, (b) ② `AFTER_COMMIT` + `@Async` fast-path를 얹어 정상 경로 지연을 없앤 버전이다. **신규 async+outbox 작업(예: 판매량·조회수 집계)은 이 표준 형태를 따른다.** 전송 대상(Kafka 여부)은 비즈니스 정책에 따라 달라진다.
 
 ## 4. 같은 로직이라도 판정이 달라질 수 있다 — 판단 기준이 학습 포인트인 이유
 

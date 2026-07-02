@@ -4,6 +4,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
+import java.util.UUID;
 
 @RequiredArgsConstructor
 @Component
@@ -22,7 +23,7 @@ public class LikeService {
         if (!likeRepository.save(new LikeModel(userId, productId))) {
             return LikeResult.IGNORED;
         }
-        eventPublisher.publish(new ProductLikedEvent(productId));
+        eventPublisher.publish(new LikedEvent(UUID.randomUUID().toString(), productId));
         return LikeResult.APPLIED;
     }
 
@@ -30,7 +31,7 @@ public class LikeService {
         if (!likeRepository.deleteByUserIdAndProductId(userId, productId)) {
             return LikeResult.IGNORED;
         }
-        eventPublisher.publish(new ProductUnlikedEvent(productId));
+        eventPublisher.publish(new UnlikedEvent(UUID.randomUUID().toString(), productId));
         return LikeResult.APPLIED;
     }
 }

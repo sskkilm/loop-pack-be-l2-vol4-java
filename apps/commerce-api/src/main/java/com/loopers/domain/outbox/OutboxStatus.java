@@ -1,4 +1,4 @@
-package com.loopers.domain.like;
+package com.loopers.domain.outbox;
 
 public enum OutboxStatus {
     PENDING, DONE

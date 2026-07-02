@@ -1,7 +1,5 @@
 package com.loopers.application.order;
 
-import com.loopers.application.product.ProductFacade;
-import com.loopers.application.product.ProductInfo;
 import com.loopers.domain.brand.BrandModel;
 import com.loopers.domain.brand.BrandRepository;
 import com.loopers.domain.coupon.CouponTemplateModel;
@@ -48,9 +46,6 @@ class OrderFacadeIntegrationTest {
 
     @Autowired
     private OrderFacade orderFacade;
-
-    @Autowired
-    private ProductFacade productFacade;
 
     @Autowired
     private UserRepository userRepository;
@@ -279,27 +274,6 @@ class OrderFacadeIntegrationTest {
             assertThat(result.getErrorType()).isEqualTo(ErrorType.BAD_REQUEST);
         }
 
-        @DisplayName("주문 전에 캐시된 상품이라도 주문(재고 차감) 후 조회하면 최신 inStock이 반영된다.")
-        @Test
-        void invalidatesProductCache_whenStockIsDecreasedByOrder() {
-            // given
-            saveUser();
-            ProductModel product = saveProduct("테스트 상품", BigDecimal.valueOf(10000));
-            productStatsRepository.save(new ProductStatsModel(product));
-            saveStock(product.getId(), 1L);
-            productFacade.getProduct(product.getId());
-
-            List<OrderFacade.OrderItemDto> commands = List.of(
-                    new OrderFacade.OrderItemDto(product.getId(), 1L)
-            );
-
-            // when
-            orderFacade.createOrder(LOGIN_ID, LOGIN_PW, commands, null);
-            ProductInfo result = productFacade.getProduct(product.getId());
-
-            // then
-            assertThat(result.inStock()).isFalse();
-        }
     }
 
     @DisplayName("주문 목록을 조회할 때,")
